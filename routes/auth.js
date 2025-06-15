@@ -69,8 +69,8 @@ router.post('/request-otp', async (req, res) => {
       user.isPhoneVerified = false; // Reset if previously verified
     }
 
-    // Generate a 6-digit OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate a 4-digit OTP
+    const otp = Math.floor(1000 + Math.random() * 9000).toString();
     user.otp = otp;
     user.otpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
     await user.save();
@@ -83,7 +83,7 @@ router.post('/request-otp', async (req, res) => {
 
 // Step 2: Verify OTP
 router.post('/verify-otp', async (req, res) => {
-  const schema = z.object({ phone: z.string().min(8), otp: z.string().length(6) });
+  const schema = z.object({ phone: z.string().min(8), otp: z.string().length(4) });
   const parse = schema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ errors: parse.error.errors });
 
@@ -183,7 +183,7 @@ router.post('/forgot-password', async (req, res) => {
     const user = await User.findOne({ phone });
     if (!user) return res.status(400).json({ message: 'User not found' });
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = Math.floor(1000 + Math.random() * 9000).toString();
     user.otp = otp;
     user.otpExpires = Date.now() + 10 * 60 * 1000;
     await user.save();
@@ -198,7 +198,7 @@ router.post('/forgot-password', async (req, res) => {
 router.post('/reset-password', async (req, res) => {
   const schema = z.object({
     phone: z.string().min(8),
-    otp: z.string().length(6),
+    otp: z.string().length(4),
     newPassword: z.string().min(6)
   });
   const parse = schema.safeParse(req.body);
