@@ -38,8 +38,8 @@ router.post('/request-otp', async (req, res) => {
       user.isPhoneVerified = false; // Reset if previously verified
     }
 
-    // Generate a 4-digit OTP
-    const otp = Math.floor(1000 + Math.random() * 9000).toString();
+    // Generate a 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
     user.otp = otp;
     user.otpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
     await user.save();
@@ -52,7 +52,7 @@ router.post('/request-otp', async (req, res) => {
 
 // Step 2: Verify OTP
 router.post('/verify-otp', async (req, res) => {
-  const schema = z.object({ phone: z.string().min(8), otp: z.string().length(4) });
+  const schema = z.object({ phone: z.string().min(8), otp: z.string().length(6) });
   const parse = schema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ errors: parse.error.errors });
 
@@ -120,7 +120,7 @@ router.post('/login', async (req, res) => {
   const { phone, password } = parse.data;
   try {
     const user = await User.findOne({ phone });
-    if (!user) return res.status(400).json({ message: 'Invalid credentials' });
+    if (!user || !user.password) return res.status(400).json({ message: 'Invalid credentials' });
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(400).json({ message: 'Invalid credentials' });
