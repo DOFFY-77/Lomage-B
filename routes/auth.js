@@ -6,9 +6,40 @@ const User = require('../models/User');
 
 const router = express.Router();
 
-// Mock: send OTP via SMS (in production, use real SMS service like Twilio)
+// Initialize Twilio client
+const twilio = require('twilio');
+const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+// Send OTP via WhatsApp using Twilio
 async function sendOtpSms(phone, otp) {
-  console.log(`OTP for ${phone}: ${otp}`);
+  try {
+    // For development/testing - always log to console
+    console.log(`OTP for ${phone}: ${otp}`);
+    
+    // Check if Twilio is configured
+    if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || process.env.TWILIO_AUTH_TOKEN === '[AuthToken]') {
+      console.log('Twilio not configured - OTP only logged to console');
+      return;
+    }
+
+    // Format phone number for WhatsApp (must include whatsapp: prefix)
+    const whatsappPhone = phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`;
+    
+    // Send WhatsApp message using Content Template (your format)
+    const message = await twilioClient.messages.create({
+      from: process.env.TWILIO_WHATSAPP_NUMBER,
+      contentSid: process.env.TWILIO_CONTENT_SID,
+      contentVariables: JSON.stringify({"1": otp}), // OTP as variable 1
+      to: whatsappPhone
+    });
+
+    console.log(`WhatsApp OTP sent successfully! Message SID: ${message.sid}`);
+    
+  } catch (error) {
+    console.error('Error sending WhatsApp OTP:', error.message);
+    // Don't throw error - still log to console for development
+    console.log(`Fallback - OTP for ${phone}: ${otp}`);
+  }
 }
 
 // Middleware to check JWT in Authorization header
@@ -120,7 +151,7 @@ router.post('/login', async (req, res) => {
   const { phone, password } = parse.data;
   try {
     const user = await User.findOne({ phone });
-    if (!user) return res.status(400).json({ message: 'Invalid credentials' });
+    if (!user || !user.password) return res.status(400).json({ message: 'Invalid credentials' });
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(400).json({ message: 'Invalid credentials' });
@@ -152,7 +183,7 @@ router.post('/forgot-password', async (req, res) => {
     const user = await User.findOne({ phone });
     if (!user) return res.status(400).json({ message: 'User not found' });
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = Math.floor(1000 + Math.random() * 9000).toString();
     user.otp = otp;
     user.otpExpires = Date.now() + 10 * 60 * 1000;
     await user.save();
@@ -167,7 +198,7 @@ router.post('/forgot-password', async (req, res) => {
 router.post('/reset-password', async (req, res) => {
   const schema = z.object({
     phone: z.string().min(8),
-    otp: z.string().length(6),
+    otp: z.string().length(4),
     newPassword: z.string().min(6)
   });
   const parse = schema.safeParse(req.body);

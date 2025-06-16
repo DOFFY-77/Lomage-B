@@ -31,3 +31,6 @@ mongo_data/
 # Build
 /dist
 /build
+
+/# Temporary files
+myNotes/
