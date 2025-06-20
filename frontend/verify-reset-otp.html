@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify OTP</title>
+</head>
+<body>
+    <h1>Verify OTP for Password Reset</h1>
+    
+    <form id="verifyOtpForm">
+        <div>
+            <label for="otp">Enter OTP sent to your phone:</label>
+            <input type="text" id="otp" maxlength="4" required>
+        </div>
+        <div>
+            <button type="submit">Verify OTP</button>
+        </div>
+    </form>
+    
+    <div>
+        <a href="forgot-password.html">Back</a>
+    </div>
+    
+    <div id="message"></div>
+    
+    <script>
+        // Check if phone number is stored
+        const phone = localStorage.getItem('resetPhone');
+        if (!phone) {
+            location.href = 'forgot-password.html';
+        }
+        
+        document.getElementById('verifyOtpForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const otp = document.getElementById('otp').value;
+            const messageDiv = document.getElementById('message');
+            
+            try {
+                const response = await fetch('http://localhost:5000/api/auth/verify-reset-otp', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ phone, otp })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    messageDiv.textContent = 'OTP verified successfully!';
+                    
+                    // Store userId and sessionToken for next step
+                    localStorage.setItem('userId', data.userId);
+                    localStorage.setItem('sessionToken', data.sessionToken);
+                    
+                    // Redirect to reset password page
+                    setTimeout(() => {
+                        location.href = 'reset-password.html';
+                    }, 1000);
+                } else {
+                    messageDiv.textContent = data.data ? data.data[0].message : 'Invalid OTP';
+                }
+            } catch (error) {
+                messageDiv.textContent = 'Error: ' + error.message;
+            }
+        });
+    </script>
+</body>
+</html>
