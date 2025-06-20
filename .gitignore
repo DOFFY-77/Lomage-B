@@ -3,6 +3,7 @@ node_modules/
 
 # Environment variables
 .env
+seed.js
 
 # Logs
 logs/
@@ -34,3 +35,5 @@ mongo_data/
 
 /# Temporary files
 myNotes/
+
+postman_test_flow.txt

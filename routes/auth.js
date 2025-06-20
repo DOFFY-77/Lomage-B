@@ -111,55 +111,65 @@ router.post('/verify-otp', async (req, res) => {
 router.post('/signup', async (req, res) => {
   const schema = z.object({
     phone: z.string().min(8),
-    username: z.string().min(3),
+    username: z.string().min(5).max(20),
     password: z.string().min(6),
-    password_confirmation: z.string().min(6)
+    password_confirmation: z.string().min(6),
+    name: z.string().optional(),
+    image: z.string().optional(),
   });
   const parse = schema.safeParse(req.body);
-  if (!parse.success) return res.status(400).json({ errors: parse.error.errors });
+  if (!parse.success) return res.status(400).json({ data: parse.error.errors });
 
-  const { phone, username, password, password_confirmation } = parse.data;
+  const { phone, username, password, password_confirmation, name, image } = parse.data;
   if (password !== password_confirmation)
-    return res.status(400).json({ message: 'Passwords do not match' });
+    return res.status(400).json({ data: [{ message: 'Passwords do not match', path: ['password_confirmation'] }] });
 
   try {
+    // Prevent signup if phone is already verified and has a user
+    const alreadyRegistered = await User.findOne({ phone, isPhoneVerified: true, username: { $exists: true, $ne: null } });
+    if (alreadyRegistered) {
+      return res.status(400).json({ data: [{ message: 'This phone number is already registered and verified.', path: ['phone'] }] });
+    }
+
     const user = await User.findOne({ phone, isPhoneVerified: true });
-    if (!user) return res.status(400).json({ message: 'Phone not verified' });
+    if (!user) return res.status(400).json({ data: [{ message: 'Phone not verified', path: ['phone'] }] });
 
     const existingUsername = await User.findOne({ username });
-    if (existingUsername) return res.status(400).json({ message: 'Username already taken' });
+    if (existingUsername) return res.status(400).json({ data: [{ message: 'Username already taken', path: ['username'] }] });
 
     user.username = username;
     user.password = await bcrypt.hash(password, 10);
+    if (name) user.name = name;
+    if (image) user.image = image;
     await user.save();
 
     res.status(200).json({ message: 'Registration complete', redirect: '/signup-complete' });
   } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ data: [{ message: 'Server error', error: err.message }] });
   }
 });
 
 // Login
 router.post('/login', async (req, res) => {
   const schema = z.object({
-    phone: z.string().min(8),
+    username: z.string().min(3),
     password: z.string().min(6)
   });
   const parse = schema.safeParse(req.body);
-  if (!parse.success) return res.status(400).json({ errors: parse.error.errors });
+  if (!parse.success) return res.status(400).json({ data: parse.error.errors });
 
-  const { phone, password } = parse.data;
+  const { username, password } = parse.data;
   try {
-    const user = await User.findOne({ phone });
-    if (!user || !user.password) return res.status(400).json({ message: 'Invalid credentials' });
+    const user = await User.findOne({ username });
+    if (!user || !user.password) return res.status(400).json({ data: [{ message: 'Invalid credentials', path: ['username'] }] });
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: 'Invalid credentials' });
+    if (!isMatch) return res.status(400).json({ data: [{ message: 'Invalid credentials', path: ['password'] }] });
 
     const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '1d' });
     res.json({ token });
   } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ data: [{ message: 'Server error', error: err.message }] });
   }
 });
 
@@ -169,45 +179,43 @@ router.post('/logout', authenticateToken, (req, res) => {
   res.json({ message: 'Logged out' });
 });
 
-
-
-
-// Forgot Password: Request OTP
+// Forgot Password: Request OTP (by username)
 router.post('/forgot-password', async (req, res) => {
-  const schema = z.object({ phone: z.string().min(8) });
+  const schema = z.object({ username: z.string().min(3) });
   const parse = schema.safeParse(req.body);
-  if (!parse.success) return res.status(400).json({ errors: parse.error.errors });
+  if (!parse.success) return res.status(400).json({ data: parse.error.errors });
 
-  const { phone } = parse.data;
+  const { username } = parse.data;
   try {
-    const user = await User.findOne({ phone });
-    if (!user) return res.status(400).json({ message: 'User not found' });
+    const user = await User.findOne({ username });
+    if (!user) return res.status(400).json({ data: [{ message: 'User not found', path: ['username'] }] });
+    if (!user.phone) return res.status(400).json({ data: [{ message: 'No phone associated with this user', path: ['phone'] }] });
 
     const otp = Math.floor(1000 + Math.random() * 9000).toString();
     user.otp = otp;
     user.otpExpires = Date.now() + 10 * 60 * 1000;
     await user.save();
-    await sendOtpSms(phone, otp);
+    await sendOtpSms(user.phone, otp);
     res.json({ message: 'OTP sent via SMS' });
   } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ data: [{ message: 'Server error', error: err.message }] });
   }
 });
 
-// Reset Password using OTP
+// Reset Password using OTP (by username)
 router.post('/reset-password', async (req, res) => {
   const schema = z.object({
-    phone: z.string().min(8),
+    username: z.string().min(3),
     otp: z.string().length(4),
     newPassword: z.string().min(6)
   });
   const parse = schema.safeParse(req.body);
-  if (!parse.success) return res.status(400).json({ errors: parse.error.errors });
+  if (!parse.success) return res.status(400).json({ data: parse.error.errors });
 
-  const { phone, otp, newPassword } = parse.data;
+  const { username, otp, newPassword } = parse.data;
   try {
-    const user = await User.findOne({ phone, otp, otpExpires: { $gt: Date.now() } });
-    if (!user) return res.status(400).json({ message: 'Invalid or expired OTP' });
+    const user = await User.findOne({ username, otp, otpExpires: { $gt: Date.now() } });
+    if (!user) return res.status(400).json({ data: [{ message: 'Invalid or expired OTP', path: ['otp'] }] });
 
     user.password = await bcrypt.hash(newPassword, 10);
     user.otp = undefined;
@@ -215,7 +223,7 @@ router.post('/reset-password', async (req, res) => {
     await user.save();
     res.json({ message: 'Password reset successful' });
   } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ data: [{ message: 'Server error', error: err.message }] });
   }
 });
 
