@@ -81,7 +81,7 @@ router.post('/request-otp', async (req, res) => {
   }
 });
 
-// Step 2: Verify OTP
+// Verify OTP for registration
 router.post('/verify-otp', async (req, res) => {
   const schema = z.object({ phone: z.string().min(8), otp: z.string().length(4) });
   const parse = schema.safeParse(req.body);
@@ -93,7 +93,7 @@ router.post('/verify-otp', async (req, res) => {
     if (!user) {
       return res.status(400).json({
         message: 'Invalid or expired OTP',
-        // redirect: '/request-otp'
+        success: false
       });
     }
 
@@ -101,16 +101,26 @@ router.post('/verify-otp', async (req, res) => {
     user.otpExpires = undefined;
     user.isPhoneVerified = true;
     await user.save();
-    res.json({ message: 'Phone verified. Continue to sign up.', next: '/signup' });
+    
+    // Generate a session token for the signup flow
+    const sessionToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '15m' });
+    
+    res.json({ 
+      message: 'Phone verified successfully', 
+      success: true,
+      userId: user._id,
+      sessionToken: sessionToken
+    });
   } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: 'Server error', success: false });
   }
 });
 
-// Step 3: Complete Signup
+// Complete Signup with userId and sessionToken
 router.post('/signup', async (req, res) => {
   const schema = z.object({
-    phone: z.string().min(8),
+    userId: z.string(),
+    sessionToken: z.string(),
     username: z.string().min(5).max(20),
     password: z.string().min(6),
     password_confirmation: z.string().min(6),
@@ -120,21 +130,30 @@ router.post('/signup', async (req, res) => {
   const parse = schema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ data: parse.error.errors });
 
-  const { phone, username, password, password_confirmation, name, image } = parse.data;
+  const { userId, sessionToken, username, password, password_confirmation, name, image } = parse.data;
   if (password !== password_confirmation)
     return res.status(400).json({ data: [{ message: 'Passwords do not match', path: ['password_confirmation'] }] });
 
   try {
-    // Prevent signup if phone is already verified and has a user
-    const alreadyRegistered = await User.findOne({ phone, isPhoneVerified: true, username: { $exists: true, $ne: null } });
-    if (alreadyRegistered) {
-      return res.status(400).json({ data: [{ message: 'This phone number is already registered and verified.', path: ['phone'] }] });
+    // Verify the session token
+    const decoded = jwt.verify(sessionToken, process.env.JWT_SECRET);
+    if (decoded.userId !== userId) {
+      return res.status(400).json({ 
+        data: [{ message: 'Invalid session', path: ['sessionToken'] }] 
+      });
+    }
+    
+    const user = await User.findById(userId);
+    if (!user) return res.status(400).json({ 
+      data: [{ message: 'User not found', path: ['userId'] }] 
+    });
+    
+    if (!user.isPhoneVerified) {
+      return res.status(400).json({ data: [{ message: 'Phone not verified', path: ['userId'] }] });
     }
 
-    const user = await User.findOne({ phone, isPhoneVerified: true });
-    if (!user) return res.status(400).json({ data: [{ message: 'Phone not verified', path: ['phone'] }] });
-
-    const existingUsername = await User.findOne({ username });
+    // Check if username is already taken
+    const existingUsername = await User.findOne({ username, _id: { $ne: userId } });
     if (existingUsername) return res.status(400).json({ data: [{ message: 'Username already taken', path: ['username'] }] });
 
     user.username = username;
@@ -143,8 +162,20 @@ router.post('/signup', async (req, res) => {
     if (image) user.image = image;
     await user.save();
 
-    res.status(200).json({ message: 'Registration complete', redirect: '/signup-complete' });
+    // Generate a JWT token for immediate login after signup
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '1d' });
+
+    res.status(200).json({ 
+      message: 'Registration complete', 
+      success: true,
+      token: token
+    });
   } catch (err) {
+    if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
+      return res.status(400).json({ 
+        data: [{ message: 'Session expired. Please verify your phone again.', path: ['sessionToken'] }] 
+      });
+    }
     res.status(500).json({ data: [{ message: 'Server error', error: err.message }] });
   }
 });
@@ -179,50 +210,95 @@ router.post('/logout', authenticateToken, (req, res) => {
   res.json({ message: 'Logged out' });
 });
 
-// Forgot Password: Request OTP (by username)
+// Forgot Password: Request OTP (by phone number)
 router.post('/forgot-password', async (req, res) => {
-  const schema = z.object({ username: z.string().min(3) });
+  const schema = z.object({ phone: z.string().min(8) });
   const parse = schema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ data: parse.error.errors });
 
-  const { username } = parse.data;
+  const { phone } = parse.data;
   try {
-    const user = await User.findOne({ username });
-    if (!user) return res.status(400).json({ data: [{ message: 'User not found', path: ['username'] }] });
-    if (!user.phone) return res.status(400).json({ data: [{ message: 'No phone associated with this user', path: ['phone'] }] });
+    const user = await User.findOne({ phone });
+    if (!user) return res.status(400).json({ data: [{ message: 'User not found with this phone number', path: ['phone'] }] });
 
     const otp = Math.floor(1000 + Math.random() * 9000).toString();
     user.otp = otp;
     user.otpExpires = Date.now() + 10 * 60 * 1000;
     await user.save();
     await sendOtpSms(user.phone, otp);
-    res.json({ message: 'OTP sent via SMS' });
+    res.json({ message: 'OTP sent via WhatsApp' });
   } catch (err) {
     res.status(500).json({ data: [{ message: 'Server error', error: err.message }] });
   }
 });
 
-// Reset Password using OTP (by username)
+// Verify OTP for password reset
+router.post('/verify-reset-otp', async (req, res) => {
+  const schema = z.object({
+    phone: z.string().min(8),
+    otp: z.string().length(4)
+  });
+  const parse = schema.safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ data: parse.error.errors });
+
+  const { phone, otp } = parse.data;
+  try {
+    const user = await User.findOne({ phone, otp, otpExpires: { $gt: Date.now() } });
+    if (!user) return res.status(400).json({ data: [{ message: 'Invalid or expired OTP', path: ['otp'] }] });
+
+    // Generate a simple session token for the reset password flow
+    const sessionToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '15m' });
+    
+    res.json({ 
+      message: 'OTP verified successfully',
+      success: true,
+      userId: user._id,
+      sessionToken: sessionToken
+    });
+  } catch (err) {
+    res.status(500).json({ data: [{ message: 'Server error', error: err.message }] });
+  }
+});
+
+// Reset Password with userId and sessionToken
 router.post('/reset-password', async (req, res) => {
   const schema = z.object({
-    username: z.string().min(3),
-    otp: z.string().length(4),
+    userId: z.string(),
+    sessionToken: z.string(),
     newPassword: z.string().min(6)
   });
   const parse = schema.safeParse(req.body);
   if (!parse.success) return res.status(400).json({ data: parse.error.errors });
 
-  const { username, otp, newPassword } = parse.data;
+  const { userId, sessionToken, newPassword } = parse.data;
   try {
-    const user = await User.findOne({ username, otp, otpExpires: { $gt: Date.now() } });
-    if (!user) return res.status(400).json({ data: [{ message: 'Invalid or expired OTP', path: ['otp'] }] });
+    // Verify the session token
+    const decoded = jwt.verify(sessionToken, process.env.JWT_SECRET);
+    if (decoded.userId !== userId) {
+      return res.status(400).json({ 
+        data: [{ message: 'Invalid session', path: ['sessionToken'] }] 
+      });
+    }
+    
+    const user = await User.findById(userId);
+    if (!user) return res.status(400).json({ 
+      data: [{ message: 'User not found', path: ['userId'] }] 
+    });
 
     user.password = await bcrypt.hash(newPassword, 10);
     user.otp = undefined;
     user.otpExpires = undefined;
     await user.save();
-    res.json({ message: 'Password reset successful' });
+    res.json({ 
+      message: 'Password reset successful',
+      success: true
+    });
   } catch (err) {
+    if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
+      return res.status(400).json({ 
+        data: [{ message: 'Session expired. Please request a new OTP.', path: ['sessionToken'] }] 
+      });
+    }
     res.status(500).json({ data: [{ message: 'Server error', error: err.message }] });
   }
 });
