@@ -5,7 +5,7 @@ This is a Node.js Express backend for mobile app authentication using MongoDB (D
 ## Features
 
 - User authentication: multi-step sign up with phone OTP, log in, log out
-- Forgot password (OTP via SMS)
+- Forgot password (OTP via WhatsApp)
 - Password reset
 - Secure password hashing
 - JWT-based authentication
@@ -34,10 +34,11 @@ This is a Node.js Express backend for mobile app authentication using MongoDB (D
      PORT=5000
      MONGODB_URI=mongodb://localhost:27017/lomageb
      JWT_SECRET=your_jwt_secret
-     # Twilio config (if using SMS in production)
+     # Twilio config (if using WhatsApp in production)
      # TWILIO_ACCOUNT_SID=your_twilio_account_sid
      # TWILIO_AUTH_TOKEN=your_twilio_auth_token
-     # TWILIO_PHONE_NUMBER=+1234567890
+     # TWILIO_WHATSAPP_NUMBER=whatsapp:+1234567890
+     # TWILIO_CONTENT_SID=your_twilio_content_sid
      ```
 4. **Start MongoDB using Docker:**
    ```sh
@@ -58,16 +59,18 @@ This is a Node.js Express backend for mobile app authentication using MongoDB (D
 2. **Verify OTP:**
    - `POST /api/auth/verify-otp`
    - Body: `{ "phone": "+1234567890", "otp": "1234" }`
+   - Returns: `{ "userId": "...", "sessionToken": "..." }`
 3. **Complete Registration:**
    - `POST /api/auth/signup`
-   - Body: `{ "phone": "+1234567890", "username": "your_username", "password": "yourPassword", "password_confirmation": "yourPassword" }`
+   - Body: `{ "userId": "...", "sessionToken": "...", "username": "your_username", "password": "yourPassword", "password_confirmation": "yourPassword" }`
 
 ### Other Endpoints
 
 - `POST /api/auth/login` - Log in
 - `POST /api/auth/logout` - Log out (requires Bearer token)
-- `POST /api/auth/forgot-password` - Request OTP for password reset
-- `POST /api/auth/reset-password` - Reset password with OTP
+- `POST /api/auth/forgot-password` - Request OTP for password reset (requires phone number)
+- `POST /api/auth/verify-reset-otp` - Verify OTP for password reset (requires phone number and OTP, returns userId and sessionToken)
+- `POST /api/auth/reset-password` - Reset password (requires userId, sessionToken, and newPassword)
 
 ---
 

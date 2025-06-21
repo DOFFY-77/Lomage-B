@@ -34,6 +34,8 @@ mongo_data/
 /build
 
 /# Temporary files
-myNotes/
+auth_flow.txt
+curl_commands.txt
 
-postman_test_flow.txt
+
+
